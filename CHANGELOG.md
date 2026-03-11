@@ -1,5 +1,10 @@
 # Evolution GO - Changelog
 
+## v0.5.4
+
+### 🔧 Improvements
+- **Update whatsmeow lib**
+
 ## v0.5.3
 
 **Docker:** `evoapicloud/evolution-go:0.5.3`
