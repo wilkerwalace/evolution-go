@@ -1,0 +1,53 @@
+# ═══════════════════════════════════════════════════════════
+#  Evolution GO — Obfuscated Docker Release Build
+#  Builds a protected binary with garble + XOR-encoded URL
+# ═══════════════════════════════════════════════════════════
+FROM golang:1.25.0-alpine AS build
+
+RUN apk add --no-cache gcc musl-dev git
+
+# Install garble for obfuscation
+RUN go install mvdan.cc/garble@latest
+
+WORKDIR /build
+
+# Copy go.mod first for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source
+COPY . .
+
+# Generate XOR-encoded URL
+ARG LICENSING_URL=https://license.evolutionfoundation.com.br
+RUN ENCODE_OUTPUT=$(go run ./tools/encode-url "$LICENSING_URL") && \
+    ENCODED=$(echo "$ENCODE_OUTPUT" | grep "^ENCODED=" | cut -d= -f2) && \
+    XOR_KEY=$(echo "$ENCODE_OUTPUT" | grep "^XOR_KEY=" | cut -d= -f2) && \
+    echo "ENCODED=$ENCODED" > /tmp/build-vars && \
+    echo "XOR_KEY=$XOR_KEY" >> /tmp/build-vars
+
+# Build with garble
+ARG VERSION=release
+RUN . /tmp/build-vars && \
+    CGO_ENABLED=1 garble -literals -tiny build \
+    -ldflags "-s -w \
+      -X github.com/EvolutionAPI/evolution-go/pkg/core.encodedEP=$ENCODED \
+      -X github.com/EvolutionAPI/evolution-go/pkg/core.xorKey=$XOR_KEY \
+      -X main.version=$VERSION" \
+    -o /build/server ./cmd/evolution-go/
+
+# Verify
+RUN echo "=== Protection Check ===" && \
+    apk add --no-cache binutils && \
+    FOUND=$(strings /build/server | grep -ci "license.evolutionfoundation" || true) && \
+    echo "URL in strings: $FOUND (should be 0)" && \
+    ls -lh /build/server
+
+# --- Runtime ---
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+COPY --from=build /build/server .
+COPY --from=build /build/pkg/whatsmeow/service/templates ./pkg/whatsmeow/service/templates
+EXPOSE 8080
+ENTRYPOINT ["./server"]

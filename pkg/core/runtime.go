@@ -108,6 +108,7 @@ func InitializeRuntime(tier, version string) *RuntimeContext {
 		} else {
 			rc.ctxHash = sha256.Sum256([]byte(rc.apiKey + rc.instanceID))
 			rc.active.Store(true)
+			ActivateIntegrity(rc)
 			fmt.Println("  ✓ License activated successfully")
 		}
 	} else {
@@ -161,6 +162,7 @@ func (rc *RuntimeContext) completeActivation(authCodeOrKey, tier string, custome
 	rc.ctxHash = sha256.Sum256([]byte(rc.apiKey + rc.instanceID))
 	rc.mu.Unlock()
 	rc.active.Store(true)
+	ActivateIntegrity(rc)
 
 	fmt.Printf("  ✓ License activated! Key: %s...%s (tier: %s)\n",
 		apiKey[:8], apiKey[len(apiKey)-4:], tier)

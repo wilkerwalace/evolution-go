@@ -1,39 +1,67 @@
 package core
 
-// Encoded service endpoint — XOR obfuscated.
-// The actual URL is derived at runtime and never stored as a string literal.
-// This prevents `strings` binary analysis from revealing the licensing server.
+// Service endpoint configuration.
+// In release builds, encodedEP and xorKey are set via ldflags:
+//   -X github.com/EvolutionAPI/evolution-go/pkg/core.encodedEP=<hex>
+//   -X github.com/EvolutionAPI/evolution-go/pkg/core.xorKey=<hex>
+// This prevents the URL from appearing as a plain string in the binary.
 
 var (
-	// These are set at build time via ldflags or initialized below.
-	// XOR key and encoded bytes for the service URL.
-	xorSeed = []byte{0x5a, 0x3c, 0x7e, 0x11, 0x45, 0x2b, 0x69, 0x0f}
+	// Set via ldflags in release builds. Fallback for dev mode below.
+	encodedEP string
+	xorKey    string
 )
 
-// encodedURL stores the XOR-encoded service URL bytes.
-// Decoded: "https://license.evolutionfoundation.com.br"
-var encodedURL = func() []byte {
-	plain := []byte{
-		0x68, 0x74, 0x74, 0x70, 0x73, 0x3a, 0x2f, 0x2f,
-		0x6c, 0x69, 0x63, 0x65, 0x6e, 0x73, 0x65, 0x2e,
-		0x65, 0x76, 0x6f, 0x6c, 0x75, 0x74, 0x69, 0x6f,
-		0x6e, 0x66, 0x6f, 0x75, 0x6e, 0x64, 0x61, 0x74,
-		0x69, 0x6f, 0x6e, 0x2e, 0x63, 0x6f, 0x6d, 0x2e,
-		0x62, 0x72,
-	}
-	enc := make([]byte, len(plain))
-	for i, b := range plain {
-		enc[i] = b ^ xorSeed[i%len(xorSeed)]
-	}
-	return enc
-}()
-
 // resolveEndpoint decodes the service URL at runtime.
-// Result is ephemeral — not stored in a package-level variable.
+// Result is ephemeral — never stored in package-level variable.
 func resolveEndpoint() string {
-	dec := make([]byte, len(encodedURL))
-	for i, b := range encodedURL {
-		dec[i] = b ^ xorSeed[i%len(xorSeed)]
+	if encodedEP != "" && xorKey != "" {
+		return decodeXOR(encodedEP, xorKey)
 	}
-	return string(dec)
+	// Dev fallback — assembled at runtime, not a single string literal
+	parts := [...]string{"h", "tt", "ps", "://", "li", "ce", "nse", ".", "ev", "ol", "ut", "io", "nf", "ou", "nd", "at", "io", "n.", "co", "m.", "br"}
+	var s string
+	for _, p := range parts {
+		s += p
+	}
+	return s
+}
+
+// decodeXOR decodes hex-encoded XOR data.
+func decodeXOR(enc, key string) string {
+	encBytes := hexDec(enc)
+	keyBytes := hexDec(key)
+	if len(keyBytes) == 0 {
+		return ""
+	}
+	out := make([]byte, len(encBytes))
+	for i, b := range encBytes {
+		out[i] = b ^ keyBytes[i%len(keyBytes)]
+	}
+	return string(out)
+}
+
+// hexDec decodes a hex string without importing encoding/hex
+// (avoids exposing the import in the symbol table).
+func hexDec(s string) []byte {
+	if len(s)%2 != 0 {
+		return nil
+	}
+	b := make([]byte, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		b[i/2] = hexVal(s[i])<<4 | hexVal(s[i+1])
+	}
+	return b
+}
+
+func hexVal(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10
+	}
+	return 0
 }
