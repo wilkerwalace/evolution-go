@@ -5,6 +5,8 @@ APP_NAME=evolution-go
 MAIN_PATH=cmd/evolution-go/main.go
 BUILD_DIR=build
 GO=go
+VERSION=$(shell grep -m1 '## v' CHANGELOG.md | sed 's/## //')
+LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 GOFLAGS=-v
 
 # Cores para output
@@ -24,7 +26,7 @@ help: ## Exibe esta mensagem de ajuda
 
 dev: ## Roda a aplicação em modo desenvolvimento
 	@echo "$(GREEN)🚀 Rodando Evolution GO em modo desenvolvimento...$(NC)"
-	$(GO) run $(MAIN_PATH) -dev
+	$(GO) run $(LDFLAGS) $(MAIN_PATH) -dev
 
 run: ## Roda a aplicação em modo produção
 	@echo "$(GREEN)🚀 Rodando Evolution GO...$(NC)"
@@ -44,19 +46,19 @@ watch: ## Roda a aplicação com hot reload (requer air)
 build: ## Compila a aplicação
 	@echo "$(GREEN)🔨 Compilando $(APP_NAME)...$(NC)"
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(APP_NAME) $(MAIN_PATH)
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME) $(MAIN_PATH)
 	@echo "$(GREEN)✅ Build completo: $(BUILD_DIR)/$(APP_NAME)$(NC)"
 
 build-linux: ## Compila para Linux
 	@echo "$(GREEN)🔨 Compilando para Linux...$(NC)"
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 $(MAIN_PATH)
+	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 $(MAIN_PATH)
 	@echo "$(GREEN)✅ Build Linux completo$(NC)"
 
 build-windows: ## Compila para Windows
 	@echo "$(GREEN)🔨 Compilando para Windows...$(NC)"
 	@mkdir -p $(BUILD_DIR)
-	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe $(MAIN_PATH)
+	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe $(MAIN_PATH)
 	@echo "$(GREEN)✅ Build Windows completo$(NC)"
 
 build-all: build build-linux build-windows ## Compila para todas as plataformas
@@ -158,7 +160,7 @@ migrate-down: ## Reverte migrations do banco de dados
 
 docker-build: ## Build da imagem Docker
 	@echo "$(GREEN)🐳 Construindo imagem Docker...$(NC)"
-	docker build -t $(APP_NAME):latest .
+	docker build --build-arg VERSION=$(VERSION) -t $(APP_NAME):latest .
 	@echo "$(GREEN)✅ Imagem Docker construída$(NC)"
 
 docker-run: ## Roda container Docker

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +20,7 @@ import (
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
 
+	gate "github.com/EvolutionAPI/evo-gate"
 	call_handler "github.com/EvolutionAPI/evolution-go/pkg/call/handler"
 	call_service "github.com/EvolutionAPI/evolution-go/pkg/call/service"
 	chat_handler "github.com/EvolutionAPI/evolution-go/pkg/chat/handler"
@@ -63,7 +67,9 @@ import (
 
 var devMode = flag.Bool("dev", false, "Enable development mode")
 
-func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.Config, conn *amqp.Connection, exPath string) *gin.Engine {
+var version = "dev"
+
+func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.Config, conn *amqp.Connection, exPath string, gateClient *gate.Client) *gin.Engine {
 	killChannel := make(map[string](chan bool))
 	clientPointer := make(map[string]*whatsmeow.Client)
 
@@ -185,6 +191,9 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 
 	r := gin.Default()
 	r.Use(telemetry.TelemetryMiddleware())
+
+	r.Use(gateClient.Middleware())
+
 	routes.NewRouter(
 		auth_middleware.NewMiddleware(config, instanceService),
 		instance_handler.NewInstanceHandler(instanceService, config),
@@ -298,21 +307,25 @@ func main() {
 		}
 	}
 
-	config := config.Load()
+	cfg := config.Load()
 
-	licenseToken := config.GlobalApiKey
+	licenseToken := cfg.GlobalApiKey
 	if licenseToken == "" {
 		log.Fatal("GlobalApiKey não configurado")
 	}
 
-	db, err := config.CreateUsersDB()
+	logger.LogInfo("Starting Evolution GO version %s", version)
 
+	startTime := time.Now()
+	gateClient := gate.MustActivate(gate.Config{APIKey: cfg.GlobalApiKey}, version)
+
+	db, err := cfg.CreateUsersDB()
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Inicializar PostgreSQL AUTH
-	authDB, err := initPostgresAuthDB(config)
+	authDB, err := initPostgresAuthDB(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -321,7 +334,7 @@ func main() {
 	}
 
 	// Manter inicialização do SQLite
-	sqliteDB, exPath, err := initAuthDB(config)
+	sqliteDB, exPath, err := initAuthDB(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -333,7 +346,7 @@ func main() {
 
 	var conn *amqp.Connection
 
-	if config.AmqpUrl != "" {
+	if cfg.AmqpUrl != "" {
 		logger.LogInfo("Attempting to connect to RabbitMQ...")
 
 		// Create connection with heartbeat to prevent timeouts
@@ -342,7 +355,7 @@ func main() {
 			Locale:    "en_US",
 		}
 
-		conn, err = amqp.DialConfig(config.AmqpUrl, amqpConfig)
+		conn, err = amqp.DialConfig(cfg.AmqpUrl, amqpConfig)
 		if err != nil {
 			logger.LogError("Failed to connect to RabbitMQ, err: %v", err)
 			logger.LogInfo("RabbitMQ producer will be created with reconnection capability")
@@ -359,8 +372,45 @@ func main() {
 		logger.LogInfo("RabbitMQ URL not configured, skipping RabbitMQ connection")
 	}
 
-	r := setupRouter(db, authDB, sqliteDB, config, conn, exPath)
+	r := setupRouter(db, authDB, sqliteDB, cfg, conn, exPath, gateClient)
 
-	logger.LogInfo("Iniciando servidor na porta %s", os.Getenv("SERVER_PORT"))
-	r.Run(":" + os.Getenv("SERVER_PORT"))
+	// Graceful shutdown with heartbeat
+	heartbeatCtx, heartbeatCancel := context.WithCancel(context.Background())
+	defer heartbeatCancel()
+
+	gateClient.StartHeartbeat(heartbeatCtx, startTime)
+
+	srv := &http.Server{
+		Addr:    ":" + os.Getenv("SERVER_PORT"),
+		Handler: r,
+	}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		logger.LogInfo("Iniciando servidor na porta %s", os.Getenv("SERVER_PORT"))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	<-quit
+	logger.LogInfo("[SHUTDOWN] Signal received, shutting down...")
+
+	// Stop heartbeat loop
+	heartbeatCancel()
+
+	if err := gateClient.Deactivate(); err != nil {
+		logger.LogWarn("%v", err)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.LogError("[SHUTDOWN] Server forced to shutdown: %v", err)
+	}
+
+	logger.LogInfo("[SHUTDOWN] Server exited")
 }

@@ -16,7 +16,8 @@ RUN go mod download
 # Copiar o restante do código
 COPY . .
 
-RUN CGO_ENABLED=1 go build -o server ./cmd/evolution-go
+ARG VERSION=dev
+RUN CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION}" -o server ./cmd/evolution-go
 
 FROM alpine:3.19.1 AS final
 
