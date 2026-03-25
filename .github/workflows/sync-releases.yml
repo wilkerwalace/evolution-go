@@ -105,12 +105,18 @@ jobs:
           mkdir -p ${{ steps.target.outputs.dir }}/pkg/core
           go run tools/build-dist/obfuscate.go pkg/core ${{ steps.target.outputs.dir }}/pkg/core/c0.go
 
-      - name: Setup whatsmeow-lib submodule
+      - name: Setup whatsmeow-lib
         run: |
           cd ${{ steps.target.outputs.dir }}
-          if [ ! -d "whatsmeow-lib/.git" ] && [ ! -f "whatsmeow-lib/.git" ]; then
-            git submodule add https://github.com/EvolutionAPI/whatsmeow.git whatsmeow-lib 2>/dev/null || true
+          # Clone for build verification
+          if [ ! -d "whatsmeow-lib/.git" ]; then
+            rm -rf whatsmeow-lib
+            git clone https://github.com/EvolutionAPI/whatsmeow.git whatsmeow-lib
           fi
+          # Register as submodule for the target repo
+          rm -rf whatsmeow-lib/.git
+          git submodule add https://github.com/EvolutionAPI/whatsmeow.git whatsmeow-lib 2>/dev/null || true
+          git submodule update --init --recursive 2>/dev/null || true
 
       - name: Clean artifacts
         run: |
