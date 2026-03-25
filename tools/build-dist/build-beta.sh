@@ -10,8 +10,11 @@ set -e
 # Run from the evolution-go root directory.
 # ============================================================
 
+LOCAL_ONLY=false
+[ "$1" = "--local" ] && LOCAL_ONLY=true
+
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-BETA_DIR="$ROOT_DIR/beta-release"
+BETA_DIR="$ROOT_DIR/dist/beta"
 BETA_REPO="https://github.com/EvolutionAPI/evolution-go-beta.git"
 MANAGER_SRC="$ROOT_DIR/../evolution-go-manager"
 OBFUSCATE_TOOL="$(dirname "$0")/obfuscate.go"
@@ -31,10 +34,14 @@ echo "  Remote:  $BETA_REPO"
 echo ""
 
 # ── 1. Init or clean ──
-echo "[1/7] Preparing beta-release..."
+echo "[1/8] Preparing dist/beta..."
 if [ -d "$BETA_DIR/.git" ] || [ -f "$BETA_DIR/.git" ]; then
     find "$BETA_DIR" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
     echo "  Cleaned existing repo"
+elif [ "$LOCAL_ONLY" = true ]; then
+    rm -rf "$BETA_DIR"
+    mkdir -p "$BETA_DIR"
+    echo "  Created local directory (no git)"
 else
     rm -rf "$BETA_DIR"
     echo "  Cloning $BETA_REPO ..."
@@ -227,18 +234,35 @@ echo "  │  Manager:    $([ -f manager/dist/index.html ] && echo 'YES' || echo 
 echo "  └──────────────────────────────────┘"
 echo ""
 
-if [ "$OK" = true ]; then
-    echo "  ✓ beta-release built successfully"
-else
+if [ "$OK" != true ]; then
     echo "  ⚠ Built with warnings"
+    exit 1
 fi
-echo ""
-echo "  Next steps:"
-echo "    cd beta-release"
-echo "    go build ./cmd/evolution-go/    # verify"
-echo "    git add -A"
-echo "    git commit -m 'beta: v${BETA_VERSION}'"
-echo "    git push origin main"
-echo ""
-echo "  Docker: evoapicloud/evolution-go:beta"
-echo ""
+
+# ── 8. Git sync ──
+if [ "$LOCAL_ONLY" = true ]; then
+    echo "[8/8] Local build complete (--local, skipping git sync)"
+    echo ""
+    echo "  ✓ dist/beta built locally"
+    echo "  Test: cd dist/beta && go build ./cmd/evolution-go/"
+    echo ""
+else
+    echo "[8/8] Syncing to $BETA_REPO ..."
+    cd "$BETA_DIR"
+
+    git add -A
+    if git diff --staged --quiet; then
+        echo "  No changes to sync"
+    else
+        git commit -m "beta: ${BETA_VERSION}"
+        git tag -a "${BETA_VERSION}" -m "Beta ${BETA_VERSION}" 2>/dev/null || echo "  Tag ${BETA_VERSION} already exists"
+        git push origin main --tags
+        echo "  ✓ Pushed ${BETA_VERSION} to $BETA_REPO"
+    fi
+
+    cd "$ROOT_DIR"
+    echo ""
+    echo "  ✓ dist/beta built and synced"
+    echo "  Docker: evoapicloud/evolution-go:beta"
+    echo ""
+fi

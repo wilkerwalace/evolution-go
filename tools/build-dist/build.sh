@@ -9,8 +9,11 @@ set -e
 # Run from the evolution-go root directory.
 # ============================================================
 
+LOCAL_ONLY=false
+[ "$1" = "--local" ] && LOCAL_ONLY=true
+
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-DIST_DIR="$ROOT_DIR/dist-release"
+DIST_DIR="$ROOT_DIR/dist/release"
 DIST_REPO="https://github.com/EvolutionAPI/evolution-go.git"
 MANAGER_SRC="$ROOT_DIR/../evolution-go-manager"
 OBFUSCATE_TOOL="$(dirname "$0")/obfuscate.go"
@@ -25,22 +28,19 @@ echo "  Dist:   $DIST_DIR"
 echo "  Remote: $DIST_REPO"
 echo ""
 
-# ── 1. Init or clean dist-release ──
-echo "[1/6] Preparing dist-release..."
-if [ -d "$DIST_DIR/.git" ]; then
-    # Already a git repo — just clean contents
+# ── 1. Init or clean ──
+echo "[1/7] Preparing dist/release..."
+if [ -d "$DIST_DIR/.git" ] || [ -f "$DIST_DIR/.git" ]; then
     find "$DIST_DIR" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
     echo "  Cleaned existing repo"
-elif [ -f "$DIST_DIR/.git" ]; then
-    # It's a submodule reference file — clean contents
-    find "$DIST_DIR" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
-    echo "  Cleaned existing submodule"
+elif [ "$LOCAL_ONLY" = true ]; then
+    rm -rf "$DIST_DIR"
+    mkdir -p "$DIST_DIR"
+    echo "  Created local directory (no git)"
 else
-    # Not a repo yet — clone the public repo
     rm -rf "$DIST_DIR"
     echo "  Cloning $DIST_REPO ..."
     git clone "$DIST_REPO" "$DIST_DIR"
-    # Clean cloned content (keep .git)
     find "$DIST_DIR" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
     echo "  Cloned and cleaned"
 fi
@@ -187,19 +187,35 @@ echo "  │  Public:      $([ -d public ] && echo 'YES' || echo 'NO')"
 echo "  └─────────────────────────────────┘"
 echo ""
 
-if [ "$OK" = true ]; then
-    echo "  ✓ dist-release built successfully"
-else
+if [ "$OK" != true ]; then
     echo "  ⚠ Built with warnings — check missing files"
+    exit 1
 fi
-echo ""
-echo "  Next steps:"
-echo "    cd dist-release"
-echo "    go build ./cmd/evolution-go/    # verify build"
-echo "    git add -A"
-echo "    git commit -m 'release: v$(cat VERSION 2>/dev/null || echo "0.0.0")'"
-echo "    git push origin main"
-echo ""
-echo "  To add as submodule (first time only):"
-echo "    git submodule add $DIST_REPO dist-release"
-echo ""
+
+# ── 7. Git sync ──
+if [ "$LOCAL_ONLY" = true ]; then
+    echo "[7/7] Local build complete (--local, skipping git sync)"
+    echo ""
+    echo "  ✓ dist/release built locally"
+    echo "  Test: cd dist/release && go build ./cmd/evolution-go/"
+    echo ""
+else
+    echo "[7/7] Syncing to $DIST_REPO ..."
+    cd "$DIST_DIR"
+    RELEASE_VERSION=$(cat VERSION 2>/dev/null || echo "0.0.0")
+
+    git add -A
+    if git diff --staged --quiet; then
+        echo "  No changes to sync"
+    else
+        git commit -m "release: ${RELEASE_VERSION}"
+        git tag -a "${RELEASE_VERSION}" -m "Release ${RELEASE_VERSION}" 2>/dev/null || echo "  Tag ${RELEASE_VERSION} already exists"
+        git push origin main --tags
+        echo "  ✓ Pushed ${RELEASE_VERSION} to $DIST_REPO"
+    fi
+
+    cd "$ROOT_DIR"
+    echo ""
+    echo "  ✓ dist/release built and synced"
+    echo ""
+fi
