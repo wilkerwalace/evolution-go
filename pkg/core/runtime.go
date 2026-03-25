@@ -18,7 +18,6 @@ import (
 
 const (
 	hbInterval = 30 * time.Minute
-	maxHBFails = 2
 )
 
 // RuntimeContext holds the licensing state. Required by middleware and routes.
@@ -100,17 +99,19 @@ func InitializeRuntime(tier, version, globalApiKey string) *RuntimeContext {
 		rc.apiKey = rd.APIKey
 		fmt.Printf("  ✓ License found: %s...%s\n", rd.APIKey[:8], rd.APIKey[len(rd.APIKey)-4:])
 
-		// Step 3: Try to activate
-		if err := activateInstance(rc, version); err != nil {
-			fmt.Printf("  ⚠ Activation failed: %v\n", err)
-			fmt.Println("  Server will start — activate via /license/register")
-			rc.active.Store(false)
-		} else {
-			rc.ctxHash = sha256.Sum256([]byte(rc.apiKey + rc.instanceID))
-			rc.active.Store(true)
-			ActivateIntegrity(rc)
-			fmt.Println("  ✓ License activated successfully")
-		}
+		// Step 3: License exists in DB — always activate locally
+		// Even if licensing server is unreachable, the service must work
+		rc.ctxHash = sha256.Sum256([]byte(rc.apiKey + rc.instanceID))
+		rc.active.Store(true)
+		ActivateIntegrity(rc)
+		fmt.Println("  ✓ License activated successfully")
+
+		// Try to notify licensing server (non-blocking, failure is OK)
+		go func() {
+			if err := activateInstance(rc, version); err != nil {
+				fmt.Printf("  ⚠ Remote activation notice failed (non-blocking): %v\n", err)
+			}
+		}()
 	} else {
 		// No license — server starts but API is blocked
 		fmt.Println()
@@ -410,13 +411,12 @@ func LicenseRoutes(eng *gin.Engine, rc *RuntimeContext) {
 }
 
 // StartHeartbeat runs periodic heartbeat in background.
-// Deactivates the service after maxHBFails consecutive failures.
+// Heartbeat is fire-and-forget — failures are logged but NEVER block the service.
+// The license is for telemetry only, not for enforcement after activation.
 func StartHeartbeat(ctx context.Context, rc *RuntimeContext, startTime time.Time) {
 	go func() {
 		ticker := time.NewTicker(hbInterval)
 		defer ticker.Stop()
-
-		var failures atomic.Int32
 
 		for {
 			select {
@@ -424,17 +424,11 @@ func StartHeartbeat(ctx context.Context, rc *RuntimeContext, startTime time.Time
 				return
 			case <-ticker.C:
 				if !rc.IsActive() {
-					continue // Don't send heartbeat if not activated
+					continue
 				}
 				uptime := int64(time.Since(startTime).Seconds())
-				err := sendHeartbeat(rc, uptime)
-				if err != nil {
-					if failures.Add(1) >= int32(maxHBFails) {
-						rc.active.Store(false)
-					}
-				} else {
-					failures.Store(0)
-					rc.active.Store(true)
+				if err := sendHeartbeat(rc, uptime); err != nil {
+					fmt.Printf("  ⚠ Heartbeat failed (non-blocking): %v\n", err)
 				}
 			}
 		}

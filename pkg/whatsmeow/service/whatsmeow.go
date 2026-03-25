@@ -34,7 +34,6 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"github.com/EvolutionAPI/evolution-go/pkg/config"
-	"github.com/EvolutionAPI/evolution-go/pkg/core"
 	producer_interfaces "github.com/EvolutionAPI/evolution-go/pkg/events/interfaces"
 	instance_model "github.com/EvolutionAPI/evolution-go/pkg/instance/model"
 	instance_repository "github.com/EvolutionAPI/evolution-go/pkg/instance/repository"
@@ -1020,7 +1019,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.Message:
 		doWebhook = true
 		postMap["event"] = "Message"
-		core.TrackMessageRecv() // Track received message for licensing telemetry
+		// Message received
 
 		// Log message arrival with detailed info
 		messageSize := "unknown"
