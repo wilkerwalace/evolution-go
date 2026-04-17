@@ -1348,20 +1348,21 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 					if err == nil {
 						webpReader := bytes.NewReader(data)
-						img, err := webp.Decode(webpReader)
-						if err != nil {
-							mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Failed to decode webp image: %v", mycli.userID, err)
-							return
+						img, decErr := webp.Decode(webpReader)
+						if decErr != nil {
+							mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to decode webp sticker, keeping raw webp: %v", mycli.userID, decErr)
+							extension = ".webp"
+							mimeType = "image/webp"
+						} else {
+							var pngBuffer bytes.Buffer
+							if encErr := png.Encode(&pngBuffer, img); encErr != nil {
+								mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to encode png from sticker, keeping raw webp: %v", mycli.userID, encErr)
+								extension = ".webp"
+								mimeType = "image/webp"
+							} else {
+								data = pngBuffer.Bytes()
+							}
 						}
-
-						var pngBuffer bytes.Buffer
-						err = png.Encode(&pngBuffer, img)
-						if err != nil {
-							mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Failed to encode png image: %v", mycli.userID, err)
-							return
-						}
-
-						data = pngBuffer.Bytes()
 					}
 					// Handle associated child media messages
 				} else if associatedImg != nil {
@@ -1390,21 +1391,24 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					mimeType = "image/png"
 					mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Processing associated child sticker message", mycli.userID)
 
-					webpReader := bytes.NewReader(data)
-					img, err := webp.Decode(webpReader)
-					if err != nil {
-						mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Failed to decode webp image: %v", mycli.userID, err)
-						return
+					if err == nil {
+						webpReader := bytes.NewReader(data)
+						img, decErr := webp.Decode(webpReader)
+						if decErr != nil {
+							mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to decode webp sticker, keeping raw webp: %v", mycli.userID, decErr)
+							extension = ".webp"
+							mimeType = "image/webp"
+						} else {
+							var pngBuffer bytes.Buffer
+							if encErr := png.Encode(&pngBuffer, img); encErr != nil {
+								mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to encode png from associated sticker, keeping raw webp: %v", mycli.userID, encErr)
+								extension = ".webp"
+								mimeType = "image/webp"
+							} else {
+								data = pngBuffer.Bytes()
+							}
+						}
 					}
-
-					var pngBuffer bytes.Buffer
-					err = png.Encode(&pngBuffer, img)
-					if err != nil {
-						mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Failed to encode png image: %v", mycli.userID, err)
-						return
-					}
-
-					data = pngBuffer.Bytes()
 				}
 
 				downloadDuration := time.Since(downloadStart)
