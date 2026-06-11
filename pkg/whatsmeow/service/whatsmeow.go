@@ -394,10 +394,14 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 
 	if cd.IsProxy {
 		var proxyConfig ProxyConfig
-		err := json.Unmarshal([]byte(cd.Instance.Proxy), &proxyConfig)
-		if err != nil {
-			w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] error unmarshalling proxy config", cd.Instance.Id)
-			return
+		// So faz unmarshal se a instancia tem proxy proprio. Quando IsProxy vem
+		// do proxy global (config), Instance.Proxy pode estar vazio e o unmarshal
+		// de "" quebraria com "unexpected end of JSON input".
+		if cd.Instance.Proxy != "" {
+			if err := json.Unmarshal([]byte(cd.Instance.Proxy), &proxyConfig); err != nil {
+				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] error unmarshalling proxy config: %v", cd.Instance.Id, err)
+				return
+			}
 		}
 
 		proxyProtocol := proxyConfig.Protocol
@@ -491,6 +495,11 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 					return
 				}
 			} else if strings.Contains(err.Error(), "username/password authentication failed") {
+				if !w.config.ProxyAllowFallback {
+					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Proxy authentication failed and fallback is disabled (set PROXY_ALLOW_FALLBACK=true to connect without proxy): %v", cd.Instance.Id, err)
+					return
+				}
+
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Proxy authentication failed, attempting to connect without proxy", cd.Instance.Id)
 
 				// Desabilita o proxy
@@ -527,6 +536,11 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 						return
 					}
 				} else if strings.Contains(err.Error(), "username/password authentication failed") {
+					if !w.config.ProxyAllowFallback {
+						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Proxy authentication failed during QR connection and fallback is disabled (set PROXY_ALLOW_FALLBACK=true to connect without proxy): %v", cd.Instance.Id, err)
+						return
+					}
+
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Proxy authentication failed during QR connection, attempting without proxy", cd.Instance.Id)
 
 					// Desabilita o proxy
@@ -1577,17 +1591,17 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			buttonClickMap := map[string]interface{}{
 				"event": "ButtonClick",
 				"data": map[string]interface{}{
-					"buttonId":     buttonClickData["buttonId"],
-					"buttonText":   buttonClickData["buttonText"],
-					"type":         buttonClickData["type"],
-					"phone":        dataMap["Sender"],
-					"jid":          dataMap["Sender"],
-					"pushName":     dataMap["PushName"],
-					"messageId":    dataMap["ID"],
-					"chat":         dataMap["Chat"],
-					"fromMe":       dataMap["FromMe"],
-					"timestamp":    evt.Info.Timestamp.Unix(),
-					"extraData":    buttonClickData,
+					"buttonId":   buttonClickData["buttonId"],
+					"buttonText": buttonClickData["buttonText"],
+					"type":       buttonClickData["type"],
+					"phone":      dataMap["Sender"],
+					"jid":        dataMap["Sender"],
+					"pushName":   dataMap["PushName"],
+					"messageId":  dataMap["ID"],
+					"chat":       dataMap["Chat"],
+					"fromMe":     dataMap["FromMe"],
+					"timestamp":  evt.Info.Timestamp.Unix(),
+					"extraData":  buttonClickData,
 				},
 				"instanceToken": mycli.token,
 				"instanceId":    mycli.userID,
@@ -2253,15 +2267,20 @@ func (w whatsmeowService) StartInstance(instanceId string) error {
 
 	if instance.Proxy != "" {
 		var proxyConfig ProxyConfig
-		err := json.Unmarshal([]byte(instance.Proxy), &proxyConfig)
-		if err != nil {
-			w.loggerWrapper.GetLogger(instanceId).LogError("[%s] error unmarshalling proxy config", instanceId)
+		if err := json.Unmarshal([]byte(instance.Proxy), &proxyConfig); err != nil {
+			w.loggerWrapper.GetLogger(instanceId).LogError("[%s] error unmarshalling proxy config: %v", instanceId, err)
 			return err
 		}
 
 		if proxyConfig.Host != "" {
 			clientData.IsProxy = true
 		}
+	}
+
+	// Tambem habilita proxy quando ha apenas proxy global configurado (sem proxy
+	// proprio na instancia); StartClient resolve os valores do config global.
+	if w.config.ProxyHost != "" {
+		clientData.IsProxy = true
 	}
 
 	go w.StartClient(clientData)

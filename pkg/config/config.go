@@ -52,6 +52,7 @@ type Config struct {
 	ProxyPort            string
 	ProxyUsername        string
 	ProxyPassword        string
+	ProxyAllowFallback   bool
 	AmqpGlobalEvents     []string
 	AmqpSpecificEvents   []string
 	NatsUrl              string
@@ -68,7 +69,6 @@ type Config struct {
 	LogMaxAge     int
 	LogDirectory  string
 	LogCompress   bool
-
 }
 
 // EnsureDBExists connects to postgres (without the target database) and creates it if it doesn't exist.
@@ -271,6 +271,10 @@ func Load() *Config {
 	proxyPort := os.Getenv(config_env.PROXY_PORT)
 	proxyUsername := os.Getenv(config_env.PROXY_USERNAME)
 	proxyPassword := os.Getenv(config_env.PROXY_PASSWORD)
+	// Por padrao NAO faz fallback para conexao sem proxy quando o proxy falha
+	// (evita vazamento de IP real). Defina PROXY_ALLOW_FALLBACK=true para o
+	// comportamento legado de conectar direto se o proxy falhar.
+	proxyAllowFallback := os.Getenv(config_env.PROXY_ALLOW_FALLBACK) == "true"
 
 	eventIgnoreGroup := os.Getenv(config_env.EVENT_IGNORE_GROUP)
 	eventIgnoreStatus := os.Getenv(config_env.EVENT_IGNORE_STATUS)
@@ -372,6 +376,7 @@ func Load() *Config {
 		ProxyPort:            proxyPort,
 		ProxyUsername:        proxyUsername,
 		ProxyPassword:        proxyPassword,
+		ProxyAllowFallback:   proxyAllowFallback,
 		EventIgnoreGroup:     eventIgnoreGroup == "true",
 		EventIgnoreStatus:    eventIgnoreStatus == "true",
 		QrcodeMaxCount:       qrMaxCount,

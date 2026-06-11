@@ -155,13 +155,17 @@ func (i *instances) ensureClientConnected(instanceId string) (*whatsmeow.Client,
 }
 
 func (i instances) Create(data *CreateStruct) (*instance_model.Instance, error) {
+	// So serializa o proxy quando informado; json.Marshal(nil) gravaria a string
+	// "null", poluindo o campo Proxy e mascarando a logica de "tem proxy?".
+	proxyStr := ""
 	if data.Proxy != nil {
 		data.Proxy.Protocol = utils.NormalizeProxyProtocol(data.Proxy.Protocol, data.Proxy.Port)
-	}
 
-	proxyJson, err := json.Marshal(data.Proxy)
-	if err != nil {
-		return nil, err
+		proxyJson, err := json.Marshal(data.Proxy)
+		if err != nil {
+			return nil, err
+		}
+		proxyStr = string(proxyJson)
 	}
 
 	findInstance, _ := i.instanceRepository.GetInstanceByName(data.Name)
@@ -175,7 +179,7 @@ func (i instances) Create(data *CreateStruct) (*instance_model.Instance, error) 
 		Name:       data.Name,
 		Token:      data.Token,
 		OsName:     i.config.OsName,
-		Proxy:      string(proxyJson),
+		Proxy:      proxyStr,
 		Connected:  false,
 		ClientName: i.config.ClientName,
 	}
@@ -261,10 +265,11 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 
 		if instance.Proxy != "" || i.config.ProxyHost != "" {
 			var proxyConfig ProxyConfig
-			err := json.Unmarshal([]byte(instance.Proxy), &proxyConfig)
-			if err != nil {
-				i.loggerWrapper.GetLogger(instance.Id).LogError("[%s] error unmarshalling proxy config: %v", instance.Id, err)
-				return nil, "", "", err
+			if instance.Proxy != "" {
+				if err := json.Unmarshal([]byte(instance.Proxy), &proxyConfig); err != nil {
+					i.loggerWrapper.GetLogger(instance.Id).LogError("[%s] error unmarshalling proxy config: %v", instance.Id, err)
+					return nil, "", "", err
+				}
 			}
 
 			if proxyConfig.Host != "" || i.config.ProxyHost != "" {
@@ -659,10 +664,11 @@ func (i instances) ForceReconnect(instanceId string, number string) error {
 
 	if instance.Proxy != "" || i.config.ProxyHost != "" {
 		var proxyConfig ProxyConfig
-		err := json.Unmarshal([]byte(instance.Proxy), &proxyConfig)
-		if err != nil {
-			i.loggerWrapper.GetLogger(instance.Id).LogError("[%s] error unmarshalling proxy config: %v", instance.Id, err)
-			return err
+		if instance.Proxy != "" {
+			if err := json.Unmarshal([]byte(instance.Proxy), &proxyConfig); err != nil {
+				i.loggerWrapper.GetLogger(instance.Id).LogError("[%s] error unmarshalling proxy config: %v", instance.Id, err)
+				return err
+			}
 		}
 
 		if proxyConfig.Host != "" || i.config.ProxyHost != "" {

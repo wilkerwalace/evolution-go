@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	whatsmeow_types "go.mau.fi/whatsmeow/types"
 	"golang.org/x/exp/rand"
-	"golang.org/x/net/proxy"
 )
 
 type Values struct {
@@ -213,45 +211,6 @@ func ParseJID(arg string) (whatsmeow_types.JID, bool) {
 	}
 
 	return recipient, true
-}
-
-func CreateHTTPProxy(httpHost, httpPort, user, password string) (func(*http.Request) (*url.URL, error), error) {
-	address := fmt.Sprintf("http://%s:%s@%s:%s", user, password, httpHost, httpPort)
-
-	parsed, err := url.Parse(address)
-	if err != nil {
-		return nil, err
-	}
-
-	return http.ProxyURL(parsed), nil
-}
-
-func CreateSocks5Proxy(socks5Host, socks5Port, user, password string) (proxy.Dialer, error) {
-	auth := &proxy.Auth{
-		User:     user,
-		Password: password,
-	}
-
-	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%s", socks5Host, socks5Port), auth, proxy.Direct)
-	if err != nil {
-		return nil, err
-	}
-
-	return dialer, nil
-
-	// return func(req *http.Request) (*url.URL, error) {
-	// 	host := req.URL.Host
-	// 	if !strings.Contains(host, ":") {
-	// 		host = fmt.Sprintf("%s:443", host) // Adiciona porta padrão 443 se não especificada
-	// 	}
-	// 	conn, err := dialer.Dial("tcp", host)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	defer conn.Close()
-
-	// 	return nil, nil
-	// }, nil
 }
 
 // NormalizeProxyProtocol returns the proxy protocol normalized to one of
