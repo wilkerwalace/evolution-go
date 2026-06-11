@@ -237,21 +237,33 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 		return nil, "", "", err
 	}
 
-	// Verifica se a instância já está rodando
-	isInstanceRunning := i.clientPointer[instance.Id] != nil
+	// Verifica se a instância já está REALMENTE rodando (cliente existe E conectado).
+	// Um cliente que existe mas está desconectado (ex.: a conexão inicial falhou
+	// por proxy ruim) NÃO pode ser tratado como "rodando" — senão a instância fica
+	// presa e nunca reconecta.
+	existingClient := i.clientPointer[instance.Id]
+	isInstanceRunning := existingClient != nil && existingClient.IsConnected()
 
-	// Sincroniza as configurações na instância em execução (se já estiver conectada)
-	err = i.whatsmeowService.UpdateInstanceSettings(instance.Id)
-	if err != nil {
-		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance not in runtime yet, will be updated when connected", instance.Id)
-		isInstanceRunning = false
-	} else {
-		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance settings updated successfully in runtime", instance.Id)
-		isInstanceRunning = true
+	if isInstanceRunning {
+		// Sincroniza as configurações na instância em execução
+		if err = i.whatsmeowService.UpdateInstanceSettings(instance.Id); err != nil {
+			i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance not in runtime yet, will be updated when connected", instance.Id)
+			isInstanceRunning = false
+		} else {
+			i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance settings updated successfully in runtime", instance.Id)
+		}
 	}
 
-	// Se a instância não estiver rodando, inicia uma nova
-	if !isInstanceRunning {
+	if isInstanceRunning {
+		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance already running, settings updated without restarting client", instance.Id)
+	} else if existingClient != nil {
+		// Cliente preso (existe mas desconectado): reinicia de forma limpa.
+		// ReconnectClient limpa o cliente antigo (handler, canais e ponteiros) e
+		// reinicia a instância do zero, aplicando o proxy atual.
+		i.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Existing client is disconnected, restarting it", instance.Id)
+		go i.whatsmeowService.ReconnectClient(instance.Id)
+	} else {
+		// Não há cliente: inicia um novo.
 		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Starting new client instance", instance.Id)
 
 		i.killChannel[instance.Id] = make(chan bool)
@@ -278,8 +290,6 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 		}
 
 		go i.whatsmeowService.StartClient(clientData)
-	} else {
-		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Instance already running, settings updated without restarting client", instance.Id)
 	}
 
 	// logger.LogInfo("Waiting 1 seconds")
@@ -297,11 +307,9 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 }
 
 func (i instances) Reconnect(instance *instance_model.Instance) error {
-	_, err := i.ensureClientConnected(instance.Id)
-	if err != nil {
-		return err
-	}
-
+	// ReconnectClient já limpa qualquer cliente existente (inclusive um preso/
+	// desconectado) e reinicia a instância. Não exigir conexão prévia aqui — senão
+	// trocar/remover proxy numa instância desconectada falharia (client disconnected).
 	return i.whatsmeowService.ReconnectClient(instance.Id)
 }
 
@@ -458,6 +466,11 @@ func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, erro
 
 		code = instance.Qrcode
 		if code == "" {
+			// Se a conexao falhou (ex.: proxy 407), expoe o motivo em vez de um
+			// generico — assim a UI mostra o erro em vez de aguardar QR pra sempre.
+			if instance.DisconnectReason != "" {
+				return nil, fmt.Errorf("%s", instance.DisconnectReason)
+			}
 			return nil, fmt.Errorf("no QR code available. Please wait a moment and try again")
 		}
 	}

@@ -149,6 +149,31 @@ type ProxyConfig struct {
 	Username string `json:"username"`
 }
 
+// connectionFailureReason traduz um erro de conexao num motivo curto e amigavel
+// para exibir ao usuario (gravado em DisconnectReason e exposto via /qr e /status).
+func connectionFailureReason(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "Proxy Authentication Required"), strings.Contains(msg, " 407"):
+		return "Falha na autenticacao do proxy (407)"
+	case strings.Contains(msg, "username/password authentication failed"):
+		return "Falha na autenticacao do proxy"
+	case strings.Contains(strings.ToLower(msg), "proxy"):
+		return "Falha ao conectar via proxy"
+	default:
+		return "Falha ao conectar ao WhatsApp"
+	}
+}
+
+// markConnectionFailed persiste o motivo da falha de conexao na instancia para
+// que a UI (manager) e a API (/qr, /status) possam exibi-lo em vez de aguardar
+// o QR indefinidamente.
+func (w whatsmeowService) markConnectionFailed(instanceId, reason string) {
+	if err := w.instanceRepository.UpdateConnected(instanceId, false, reason); err != nil {
+		w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to persist disconnect reason: %v", instanceId, err)
+	}
+}
+
 func (w whatsmeowService) ReconnectClient(instanceId string) error {
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Starting reconnection process - simulating restart", instanceId)
 
@@ -497,6 +522,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 			} else if strings.Contains(err.Error(), "username/password authentication failed") {
 				if !w.config.ProxyAllowFallback {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Proxy authentication failed and fallback is disabled (set PROXY_ALLOW_FALLBACK=true to connect without proxy): %v", cd.Instance.Id, err)
+					w.markConnectionFailed(cd.Instance.Id, connectionFailureReason(err))
 					return
 				}
 
@@ -514,6 +540,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Successfully connected without proxy", cd.Instance.Id)
 			} else {
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect: %v", cd.Instance.Id, err)
+				w.markConnectionFailed(cd.Instance.Id, connectionFailureReason(err))
 				return
 			}
 		}
@@ -538,6 +565,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				} else if strings.Contains(err.Error(), "username/password authentication failed") {
 					if !w.config.ProxyAllowFallback {
 						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Proxy authentication failed during QR connection and fallback is disabled (set PROXY_ALLOW_FALLBACK=true to connect without proxy): %v", cd.Instance.Id, err)
+						w.markConnectionFailed(cd.Instance.Id, connectionFailureReason(err))
 						return
 					}
 
@@ -555,6 +583,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Successfully connected without proxy", cd.Instance.Id)
 				} else {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect: %v", cd.Instance.Id, err)
+					w.markConnectionFailed(cd.Instance.Id, connectionFailureReason(err))
 					return
 				}
 			}
